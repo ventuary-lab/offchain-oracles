@@ -97,19 +97,3 @@ func Unmarshal(data []byte) (Transaction, error) {
 
 	return tx, err
 }
-
-func GroupByHeightAndFunc(txs []Transaction) map[int]map[ContractFunc][]Transaction {
-	groupedTxs := make(map[int]map[ContractFunc][]Transaction)
-
-	for _, v := range txs {
-		if v.InvokeScriptBody == nil {
-			continue
-		}
-		_, ok := groupedTxs[v.Height]
-		if !ok {
-			groupedTxs[v.Height] = make(map[ContractFunc][]Transaction)
-		}
-		groupedTxs[v.Height][v.InvokeScriptBody.Call.Function] = append(groupedTxs[v.Height][v.InvokeScriptBody.Call.Function], v)
-	}
-	return groupedTxs
-}

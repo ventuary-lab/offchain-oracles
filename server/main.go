@@ -1,36 +1,46 @@
 package main
 
 import (
-	"./routers"
-	"context"
-//	"golang.org/x/crypto/acme/autocert"
+	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"time"
+	"offchain-oracles/storage"
+	"strconv"
 )
 
 func main() {
-	args := os.Args[1:]
+	http.HandleFunc("/api/price/", handler)
+	http.ListenAndServe(":8080", nil)
+}
 
-	handler := routers.NewRouter()
-	srv := &http.Server{
-		Addr:         args[0],
-		Handler:      handler,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+func handler(w http.ResponseWriter, r *http.Request) {
+
+	keys, ok := r.URL.Query()["height"]
+
+	if !ok || len(keys[0]) < 1 {
+		log.Println("Url Param 'height' is missing")
+		return
 	}
 
-	/*go func() {
-		srv.Serve(autocert.NewListener(args[0]))
-	}()*/
+	height, err := strconv.Atoi(keys[0])
+	if err != nil {
+		log.Print(err)
+		return
+	}
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	<-c
+	text, err := storage.GetKeystore(height)
+	if err != nil {
+		log.Print(err)
+		return
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	srv.Shutdown(ctx)
+	result, err := json.Marshal(text)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	fmt.Fprintf(w, string(result))
+
 }

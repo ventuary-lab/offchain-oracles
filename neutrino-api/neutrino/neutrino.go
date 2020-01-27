@@ -1,6 +1,6 @@
 package neutrino
 
-import "../../wavesapi/transactions"
+import "offchain-oracles/wavesapi/transactions"
 
 const (
 	SwapWavesToNeutrinoFunc transactions.ContractFunc = "swapWavesToNeutrino"

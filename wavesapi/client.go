@@ -6,14 +6,17 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
+	"offchain-oracles/wavesapi/models"
+	"offchain-oracles/wavesapi/state"
+	"offchain-oracles/wavesapi/transactions"
 	"strconv"
 	"time"
-	"./transactions"
-	"./state"
 )
 
 const (
-	SignPath               = "/transactions/sign"
+	SignTxPath             = "/transactions/sign"
+	SignMsgPath            = "/addresses/signText"
+	VerifyMsgPath          = "/addresses/verifyText"
 	BroadcastPath          = "/transactions/broadcast"
 	GetTxPath              = "/transactions/info"
 	GetUnconfirmedTxByPath = "/transactions/unconfirmed/info"
@@ -77,6 +80,7 @@ func (node Node) GetStateByAddress(address string) (map[string]state.State, erro
 	}
 	return states.Map(), nil
 }
+
 func (node Node) GetTransactions(address string, after string) ([]transactions.Transaction, error) {
 	url := node.nodeUrl + GetTransactionsPath + "/" + address + "/limit/" + strconv.Itoa(DefaultTxLimit) + "?after=" + after
 	rsBody, _, err := sendRequest("GET", url, nil, "")
@@ -123,7 +127,7 @@ func (node Node) SignTx(tx *transactions.Transaction) error {
 	if err != nil {
 		return err
 	}
-	rsBody, _, err := sendRequest("POST", node.nodeUrl+SignPath, rqBody, node.apiKey)
+	rsBody, _, err := sendRequest("POST", node.nodeUrl+SignTxPath, rqBody, node.apiKey)
 	if err != nil {
 		return err
 	}
@@ -134,6 +138,38 @@ func (node Node) SignTx(tx *transactions.Transaction) error {
 	}
 	*tx = newTx
 	return nil
+}
+
+func (node Node) SignMsg(msg string, address string) (models.SignedText, error) {
+	rsBody, _, err := sendRequest("POST", node.nodeUrl+SignMsgPath+"/"+address, []byte(msg), node.apiKey)
+	if err != nil {
+		return models.SignedText{}, err
+	}
+
+	response := models.SignedText{}
+	err = json.Unmarshal(rsBody, &response)
+	if err != nil {
+		return models.SignedText{}, err
+	}
+	return response, err
+}
+
+func (node Node) VerifyMsg(text models.SignedText, address string) (bool, error) {
+	rqBody, err := json.Marshal(text)
+	if err != nil {
+		return false, err
+	}
+	rsBody, _, err := sendRequest("POST", node.nodeUrl+VerifyMsgPath+"/"+address, rqBody, node.apiKey)
+	if err != nil {
+		return false, err
+	}
+
+	response := make(map[string]interface{})
+	err = json.Unmarshal(rsBody, &response)
+	if err != nil {
+		return false, err
+	}
+	return response["valid"].(bool), nil
 }
 
 func (node Node) WaitTx(id string) <-chan error {

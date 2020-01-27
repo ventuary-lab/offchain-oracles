@@ -1,72 +1,158 @@
 package main
 
 import (
-	"../wavesapi"
-	"../wavesapi/transactions"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"net/http"
+	"offchain-oracles/signer/config"
+	"offchain-oracles/signer/provider"
+	"offchain-oracles/storage"
+	"offchain-oracles/wavesapi"
+	"offchain-oracles/wavesapi/models"
+	"offchain-oracles/wavesapi/transactions"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
+
+const (
+	defaultConfigFileName = "config.json"
+	signPrefix            = "WAVESNEUTRINOPREFIX"
+)
+
 func main() {
-	controlContract := "" // TODO: config
-	var nodeClient = wavesapi.New("127.0.0.1:6869", "apiKey") // TODO: config
-	contractState, err := nodeClient.GetStateByAddress(controlContract)
+	var confFileName string
+	flag.StringVar(&confFileName, "config", defaultConfigFileName, "set config path")
+	flag.Parse()
+
+	cfg, err := config.Load(confFileName)
 	if err != nil {
 		panic(err)
 	}
 
-	oracles := strings.Split(contractState["oracles"].Value.(string), ",")
-	var ips []string
-	for _,v := range oracles {
-		ips = append(ips, contractState[v + "ip"].Value.(string))
-	}
+	var priceProvider provider.PriceProvider = provider.BinanceProvider{}
 
-	height, err := nodeClient.GetHeight()
-	if err != nil {
-		panic(err)
-	}
+	var nodeClient = wavesapi.New(cfg.NodeURL, cfg.ApiKey)
 
-	var signs []string
-	var values []string
-
-	//TODO: Get binance and sign
-	for i,_ := range oracles {
-		var client = &http.Client{Timeout: 10 * time.Second}
-		res, err := client.Get(ips[i] + "/api/price/" + strconv.Itoa(height))
+	for true {
+		contractState, err := nodeClient.GetStateByAddress(cfg.ControlContract)
 		if err != nil {
 			panic(err)
 		}
 
-		if res.StatusCode == 200 {
-			var result map[string]interface{}
-			err = json.NewDecoder(res.Body).Decode(result)
+		pubKeyOracles := strings.Split(contractState["oracles"].Value.(string), ",")
+
+		height, err := nodeClient.GetHeight()
+		if err != nil {
+			panic(err)
+		}
+
+		_, priceExist := contractState["price_"+strconv.Itoa(height)]
+		if priceExist {
+			continue
+		}
+
+		signs := make(map[string]string)
+		values := make(map[string]string)
+
+		for _, ip := range cfg.OraclesIp {
+			var client = &http.Client{Timeout: 10 * time.Second}
+			res, err := client.Get(ip + "/api/price?height=" + strconv.Itoa(height))
 			if err != nil {
 				panic(err)
 			}
-			signs = append(signs, result["sign"].(string))
-			values = append(values, result["value"].(string))
+
+			if res.StatusCode == 200 {
+				var result models.SignedText
+				err = json.NewDecoder(res.Body).Decode(result)
+				if err != nil {
+					panic(err)
+				}
+
+				isValidPubKey := false
+				for _, v := range pubKeyOracles {
+					if v == result.PublicKey {
+						isValidPubKey = true
+					}
+				}
+
+				if !isValidPubKey {
+					fmt.Printf("invalid pubKey (%s)", ip)
+				}
+
+				values[result.PublicKey] = strings.Split(result.Message, ",")[1]
+				signs[result.PublicKey] = result.Signature
+			}
+
+			res.Body.Close()
 		}
 
-		res.Body.Close()
-	}
+		signedPrice, err := storage.GetKeystore(height)
+		if err != nil && err != leveldb.ErrNotFound {
+			panic(err)
+		} else {
+			newNotConvertedPrice, err := priceProvider.PriceNow()
+			if err != nil {
+				panic(err)
+			}
+			newPrice := int(newNotConvertedPrice * 100)
+			msg := signPrefix + "_" + strconv.Itoa(newPrice) + "_" + strconv.Itoa(height)
+			signedText, err := nodeClient.SignMsg(msg, cfg.OracleAddress)
+			err = storage.PutKeystore(height, signedText)
+			if err != nil {
+				panic(err)
+			}
+		}
+		fmt.Printf("History price: {%s}", signedPrice.Message)
 
-	if len(signs) > 3 {
-		tx := transactions.New(transactions.InvokeScript, "sender") //TODO: config
-		tx.NewInvokeScript(controlContract, transactions.FuncCall {
-			Function: "finalizeCurrentPrice",
-			Args: []transactions.FuncArg{
-				{
-					Value: strings.Join(signs, ","),
-					Type: "string",
-				},
-				{
-					Value: strings.Join(values, ","),
-					Type: "string",
-				},
-			},
-		}, nil, 500000)
-	}
+		if len(signs) > 3 {
+			sortedValues := ""
+			sortedSigns := ""
+			for _, pubKey := range pubKeyOracles {
+				if len(sortedSigns) > 0 {
+					sortedSigns += ","
+				}
+				if len(sortedValues) > 0 {
+					sortedValues += ","
+				}
 
+				value, ok := values[pubKey]
+				if ok {
+					sortedValues += value
+				} else {
+					sortedValues += "0"
+				}
+
+				sign, ok := signs[pubKey]
+				if ok {
+					sortedSigns += sign
+				} else {
+					sortedSigns += "0"
+				}
+			}
+
+			tx := transactions.New(transactions.InvokeScript, cfg.OracleAddress)
+			tx.NewInvokeScript(cfg.ControlContract, transactions.FuncCall{
+				Function: "finalizeCurrentPrice",
+				Args: []transactions.FuncArg{
+					{
+						Value: sortedValues,
+						Type:  "string",
+					},
+					{
+						Value: sortedSigns,
+						Type:  "string",
+					},
+				},
+			}, nil, 500000)
+
+			err = nodeClient.Broadcast(tx)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
 }
