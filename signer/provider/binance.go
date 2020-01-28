@@ -9,24 +9,24 @@ import (
 type BinanceProvider struct{}
 
 func (BinanceProvider) PriceNow() (float32, error) {
-	err, priceWavesUsdt := priceNowByPair("WAVESUSDT")
+	priceWavesUsdt, err := priceNowByPair("WAVESUSDT")
 	if err != nil {
 		return 0, err
 	}
 
-	err, priceWavesBtc := priceNowByPair("WAVESBTC")
+	priceWavesBtc, err := priceNowByPair("WAVESBTC")
 	if err != nil {
 		return 0, err
 	}
 
-	err, priceBtcUsdt := priceNowByPair("BTCUSDT")
+	priceBtcUsdt, err := priceNowByPair("BTCUSDT")
 	if err != nil {
 		return 0, err
 	}
 
 	price := priceWavesUsdt + (priceWavesBtc*priceBtcUsdt)/2
 
-	return price.nil
+	return price, nil
 }
 
 func priceNowByPair(pair string) (float32, error) {
