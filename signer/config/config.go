@@ -9,7 +9,6 @@ type Config struct {
 	NodeURL         string
 	ApiKey          string
 	ControlContract string
-	OracleAddress   string
 	OraclesIp       []string
 }
 

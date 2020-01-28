@@ -25,7 +25,9 @@ const (
 
 func main() {
 	var confFileName string
+	var oracleAddress string
 	flag.StringVar(&confFileName, "config", defaultConfigFileName, "set config path")
+	flag.StringVar(&confFileName, "oracleAddress", "", "set oracle address")
 	flag.Parse()
 
 	cfg, err := config.Load(confFileName)
@@ -100,7 +102,7 @@ func main() {
 			}
 			newPrice := int(newNotConvertedPrice * 100)
 			msg := signPrefix + "_" + strconv.Itoa(newPrice) + "_" + strconv.Itoa(height)
-			signedText, err := nodeClient.SignMsg(msg, cfg.OracleAddress)
+			signedText, err := nodeClient.SignMsg(msg, oracleAddress)
 			err = storage.PutKeystore(height, signedText)
 			if err != nil {
 				panic(err)
@@ -108,15 +110,15 @@ func main() {
 		}
 		fmt.Printf("History price: {%s}", signedPrice.Message)
 
-		if len(signs) > 3 {
+		if _, ok := contractState["price_" + strconv.Itoa(height)]; len(signs) + 1  >= 3 && !ok {
 			sortedValues := ""
 			sortedSigns := ""
 			for _, pubKey := range pubKeyOracles {
 				if len(sortedSigns) > 0 {
-					sortedSigns += ","
+					sortedSigns += ";"
 				}
 				if len(sortedValues) > 0 {
-					sortedValues += ","
+					sortedValues += ";"
 				}
 
 				value, ok := values[pubKey]
@@ -134,7 +136,7 @@ func main() {
 				}
 			}
 
-			tx := transactions.New(transactions.InvokeScript, cfg.OracleAddress)
+			tx := transactions.New(transactions.InvokeScript, oracleAddress)
 			tx.NewInvokeScript(cfg.ControlContract, transactions.FuncCall{
 				Function: "finalizeCurrentPrice",
 				Args: []transactions.FuncArg{
@@ -150,6 +152,11 @@ func main() {
 			}, nil, 500000)
 
 			err = nodeClient.Broadcast(tx)
+			if err != nil {
+				panic(err)
+			}
+
+			err = <- nodeClient.WaitTx(tx.ID)
 			if err != nil {
 				panic(err)
 			}
