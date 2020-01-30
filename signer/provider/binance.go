@@ -25,7 +25,7 @@ func (BinanceProvider) PriceNow() (float64, error) {
 		return 0, err
 	}
 
-	price := priceWavesUsdt + (priceWavesBtc*priceBtcUsdt)/2
+	price := (priceWavesUsdt + (priceWavesBtc * priceBtcUsdt)) / 2
 
 	return price, nil
 }
