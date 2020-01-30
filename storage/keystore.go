@@ -4,16 +4,21 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"offchain-oracles/wavesapi/models"
+	"sync"
 
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
-const (
-	path = "db/"
-)
+var heightLocker map[int]*sync.Mutex = make(map[int]*sync.Mutex)
 
-func PutKeystore(height int, text models.SignedText) error {
-	db, err := leveldb.OpenFile(path+"/"+priceFeedPath, nil)
+func PutKeystore(path string, height int, text models.SignedText) error {
+	_, ok := heightLocker[height]
+	if !ok {
+		heightLocker[height] = &sync.Mutex{}
+	}
+	heightLocker[height].Lock()
+	defer heightLocker[height].Unlock()
+	db, err := leveldb.OpenFile(path+"/"+"prices", nil)
 	defer db.Close()
 	if err != nil {
 		return err
@@ -34,8 +39,14 @@ func PutKeystore(height int, text models.SignedText) error {
 	return nil
 }
 
-func GetKeystore(height int) (models.SignedText, error) {
-	db, err := leveldb.OpenFile(path+"/"+priceFeedPath, nil)
+func GetKeystore(path string, height int) (models.SignedText, error) {
+	_, ok := heightLocker[height]
+	if !ok {
+		heightLocker[height] = &sync.Mutex{}
+	}
+	heightLocker[height].Lock()
+	defer heightLocker[height].Unlock()
+	db, err := leveldb.OpenFile(path+"/"+"prices", nil)
 	defer db.Close()
 
 	if err != nil {

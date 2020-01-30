@@ -1,7 +1,7 @@
 package models
 
 type SignedText struct {
-	Message   string
-	PublicKey string
-	Signature string
+	Message   string `json:"message"`
+	PublicKey string `json:"publicKey"`
+	Signature string `json:"signature"`
 }

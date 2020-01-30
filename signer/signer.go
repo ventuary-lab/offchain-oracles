@@ -1,11 +1,10 @@
-package main
+package signer
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"net/http"
-	"offchain-oracles/signer/config"
+	"offchain-oracles/config"
 	"offchain-oracles/signer/provider"
 	"offchain-oracles/storage"
 	"offchain-oracles/wavesapi"
@@ -19,37 +18,26 @@ import (
 )
 
 const (
-	defaultConfigFileName = "config.json"
-	signPrefix            = "WAVESNEUTRINOPREFIX"
+	signPrefix = "WAVESNEUTRINOPREFIX"
 )
 
-func main() {
-	var confFileName string
-	var oracleAddress string
-	flag.StringVar(&confFileName, "config", defaultConfigFileName, "set config path")
-	flag.StringVar(&confFileName, "oracleAddress", "", "set oracle address")
-	flag.Parse()
-
-	cfg, err := config.Load(confFileName)
-	if err != nil {
-		panic(err)
-	}
-
+func StartSigner(cfg config.Config, oracleAddress string, dbPath string) {
 	var priceProvider provider.PriceProvider = provider.BinanceProvider{}
 
 	var nodeClient = wavesapi.New(cfg.NodeURL, cfg.ApiKey)
 
+	timeout := false
 	for true {
 		contractState, err := nodeClient.GetStateByAddress(cfg.ControlContract)
 		if err != nil {
-			panic(err)
+			fmt.Printf("Error: %s \n", err.Error())
 		}
 
 		pubKeyOracles := strings.Split(contractState["oracles"].Value.(string), ",")
 
 		height, err := nodeClient.GetHeight()
 		if err != nil {
-			panic(err)
+			fmt.Printf("Error: %s \n", err.Error())
 		}
 
 		_, priceExist := contractState["price_"+strconv.Itoa(height)]
@@ -57,68 +45,82 @@ func main() {
 			continue
 		}
 
+		ipsByPubKeyOracle := make(map[string][]string)
+		for _, pubKeyOracle := range pubKeyOracles {
+			ip, ok := contractState["ips_"+pubKeyOracle]
+			if !ok {
+				continue
+			}
+
+			ipsByPubKeyOracle[pubKeyOracle] = strings.Split(ip.Value.(string), ";")
+		}
 		signs := make(map[string]string)
 		values := make(map[string]string)
 
-		for _, ip := range cfg.OraclesIp {
+		for pubKeyOracle, ips := range ipsByPubKeyOracle {
 			var client = &http.Client{Timeout: 10 * time.Second}
-			res, err := client.Get(ip + "/api/price?height=" + strconv.Itoa(height))
+			res, err := client.Get(ips[0] + "/api/price?height=" + strconv.Itoa(height))
 			if err != nil {
-				panic(err)
+				fmt.Printf("Error: %s \n", err.Error())
+				continue
 			}
 
 			if res.StatusCode == 200 {
 				var result models.SignedText
-				err = json.NewDecoder(res.Body).Decode(result)
+				err = json.NewDecoder(res.Body).Decode(&result)
 				if err != nil {
-					panic(err)
+					fmt.Printf("Error: %s \n", err.Error())
+					continue
 				}
 
-				isValidPubKey := false
-				for _, v := range pubKeyOracles {
-					if v == result.PublicKey {
-						isValidPubKey = true
-					}
+				if pubKeyOracle != result.PublicKey {
+					fmt.Printf("invalid pubKey (%s) \n", pubKeyOracle)
+					continue
 				}
 
-				if !isValidPubKey {
-					fmt.Printf("invalid pubKey (%s)", ip)
-				}
-
-				values[result.PublicKey] = strings.Split(result.Message, ",")[1]
+				values[result.PublicKey] = strings.Split(result.Message, "_")[2]
 				signs[result.PublicKey] = result.Signature
+				fmt.Printf("Oracle %s: %s \n", result.PublicKey, values[result.PublicKey])
 			}
 
 			res.Body.Close()
 		}
 
-		signedPrice, err := storage.GetKeystore(height)
+		signedPrice, err := storage.GetKeystore(dbPath, height)
 		if err != nil && err != leveldb.ErrNotFound {
-			panic(err)
+			fmt.Printf("Error: %s \n", err.Error())
 		} else {
 			newNotConvertedPrice, err := priceProvider.PriceNow()
+
 			if err != nil {
-				panic(err)
+				fmt.Printf("Error: %s \n", err.Error())
 			}
+
 			newPrice := int(newNotConvertedPrice * 100)
-			msg := signPrefix + "_" + strconv.Itoa(newPrice) + "_" + strconv.Itoa(height)
+			msg := signPrefix + "_" + strconv.Itoa(height) + "_" + strconv.Itoa(newPrice)
 			signedText, err := nodeClient.SignMsg(msg, oracleAddress)
-			err = storage.PutKeystore(height, signedText)
+
+			err = storage.PutKeystore(dbPath, height, signedText)
 			if err != nil {
-				panic(err)
+				fmt.Printf("Error: %s \n", err.Error())
 			}
 		}
-		fmt.Printf("History price: {%s}", signedPrice.Message)
+		fmt.Printf("Price by {%d}: {%s} \n", height, signedPrice.Message)
 
-		if _, ok := contractState["price_" + strconv.Itoa(height)]; len(signs) + 1  >= 3 && !ok {
+		if !timeout {
+			time.Sleep(time.Duration(cfg.Timeout) * time.Second)
+			timeout = true
+			continue
+		}
+		if _, ok := contractState["price_"+strconv.Itoa(height)]; len(signs) >= 3 && !ok {
 			sortedValues := ""
 			sortedSigns := ""
 			for _, pubKey := range pubKeyOracles {
 				if len(sortedSigns) > 0 {
-					sortedSigns += ";"
+					sortedSigns += ","
 				}
 				if len(sortedValues) > 0 {
-					sortedValues += ";"
+					sortedValues += ","
 				}
 
 				value, ok := values[pubKey]
@@ -132,7 +134,7 @@ func main() {
 				if ok {
 					sortedSigns += sign
 				} else {
-					sortedSigns += "0"
+					sortedSigns += "q"
 				}
 			}
 
@@ -150,16 +152,24 @@ func main() {
 					},
 				},
 			}, nil, 500000)
+			err = nodeClient.SignTx(&tx)
+			if err != nil {
+				fmt.Printf("Error: %s \n", err.Error())
+			}
 
 			err = nodeClient.Broadcast(tx)
 			if err != nil {
-				panic(err)
+				fmt.Printf("Error: %s \n", err.Error())
 			}
 
-			err = <- nodeClient.WaitTx(tx.ID)
+			err = <-nodeClient.WaitTx(tx.ID)
 			if err != nil {
-				panic(err)
+				fmt.Printf("Error: %s \n", err.Error())
 			}
+			fmt.Printf("Tx finilize: %s \n", tx.ID)
 		}
+
+		timeout = false
+		time.Sleep(1 * time.Second)
 	}
 }

@@ -1,31 +1,28 @@
-package main
+package server
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"net/http"
 	"offchain-oracles/storage"
 	"strconv"
 )
 
-const (
-	defaultHost = "127.0.0.1:8080"
-)
+var dbPath string
 
-func main() {
-	var host string
-	flag.StringVar(&host, "host", defaultHost, "set host")
-	flag.Parse()
-	http.HandleFunc("/api/price/", handler)
-	http.ListenAndServe(host, nil)
+func StartServer(host string, newDbPath string) {
+	for {
+		dbPath = newDbPath
+		http.HandleFunc("/api/price/", handleGetPrice)
+		http.ListenAndServe(host, nil)
+	}
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func handleGetPrice(w http.ResponseWriter, r *http.Request) {
 	keys, ok := r.URL.Query()["height"]
 
 	if !ok || len(keys[0]) < 1 {
-		http.Error(w,"Url Param 'height' is missing", 404)
+		http.Error(w, "Url Param 'height' is missing", 404)
 		return
 	}
 
@@ -35,7 +32,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, err := storage.GetKeystore(height)
+	text, err := storage.GetKeystore(dbPath, height)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return

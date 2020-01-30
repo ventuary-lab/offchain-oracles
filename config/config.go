@@ -9,7 +9,7 @@ type Config struct {
 	NodeURL         string
 	ApiKey          string
 	ControlContract string
-	OraclesIp       []string
+	Timeout         int
 }
 
 func Load(filename string) (Config, error) {

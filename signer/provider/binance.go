@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 )
 
 type BinanceProvider struct{}
 
-func (BinanceProvider) PriceNow() (float32, error) {
+func (BinanceProvider) PriceNow() (float64, error) {
 	priceWavesUsdt, err := priceNowByPair("WAVESUSDT")
 	if err != nil {
 		return 0, err
@@ -29,7 +30,7 @@ func (BinanceProvider) PriceNow() (float32, error) {
 	return price, nil
 }
 
-func priceNowByPair(pair string) (float32, error) {
+func priceNowByPair(pair string) (float64, error) {
 	resp, err := http.Get("https://api.binance.com/api/v3/ticker/price?symbol=" + pair)
 	if err != nil {
 		return 0, err
@@ -47,5 +48,9 @@ func priceNowByPair(pair string) (float32, error) {
 		return 0, err
 	}
 
-	return jsonResponse["price"].(float32), nil
+	price, err := strconv.ParseFloat(jsonResponse["price"].(string), 64)
+	if err != nil {
+		return 0, err
+	}
+	return price, nil
 }
