@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 const (
@@ -30,8 +32,11 @@ func main() {
 		panic(err)
 	}
 
-	go server.StartServer(host, dbPath)
-	go signer.StartSigner(cfg, oracleAddress, dbPath)
+	db, err := leveldb.OpenFile(dbPath+"/"+"prices", nil)
+	defer db.Close()
+
+	go server.StartServer(host, db)
+	go signer.StartSigner(cfg, oracleAddress, db)
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)

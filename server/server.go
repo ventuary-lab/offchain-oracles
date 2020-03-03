@@ -6,15 +6,18 @@ import (
 	"net/http"
 	"offchain-oracles/storage"
 	"strconv"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
-var dbPath string
+var db *leveldb.DB
 
-func StartServer(host string, newDbPath string) {
+func StartServer(host string, newDb *leveldb.DB) {
 	for {
-		dbPath = newDbPath
+		db = newDb
 		http.HandleFunc("/api/price/", handleGetPrice)
 		http.ListenAndServe(host, nil)
+		println("Restart server")
 	}
 }
 
@@ -32,7 +35,7 @@ func handleGetPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, err := storage.GetKeystore(dbPath, height)
+	text, err := storage.GetKeystore(db, height)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return

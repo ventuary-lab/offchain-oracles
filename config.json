@@ -1,6 +1,11 @@
 {
   "NodeURL": "http://127.0.0.1:6869",
   "ApiKey": "waves-private-node",
-  "ControlContract": "",
-  "Timeout": 1
+  "ControlContract": "3M1Wrb13iRyAohaw3LVpX5TuzDMp3piTMz1",
+  "Timeout": 0,
+  "Ips": [
+    "http://127.0.0.1:8080",
+    "http://127.0.0.1:8081",
+    "http://127.0.0.1:8082"
+  ]
 }

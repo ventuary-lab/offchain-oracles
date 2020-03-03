@@ -1,6 +1,7 @@
 package signer
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcutil/base58"
+
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
@@ -21,7 +24,7 @@ const (
 	signPrefix = "WAVESNEUTRINOPREFIX"
 )
 
-func StartSigner(cfg config.Config, oracleAddress string, dbPath string) {
+func StartSigner(cfg config.Config, oracleAddress string, db *leveldb.DB) {
 	var priceProvider provider.PriceProvider = provider.BinanceProvider{}
 
 	var nodeClient = wavesapi.New(cfg.NodeURL, cfg.ApiKey)
@@ -29,12 +32,15 @@ func StartSigner(cfg config.Config, oracleAddress string, dbPath string) {
 	isTimeout := false
 	for true {
 		var err error
-		isTimeout, err = HandleHeight(cfg, oracleAddress, dbPath, nodeClient, priceProvider, isTimeout)
-		fmt.Printf("Error: %s \n", err.Error())
+		isTimeout, err = HandleHeight(cfg, oracleAddress, db, nodeClient, priceProvider, isTimeout)
+		if err != nil {
+			fmt.Printf("Error: %s \n", err.Error())
+		}
+		//	time.Sleep(time.Second * time.Duration(cfg.Timeout))
 	}
 }
 
-func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
+func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 	nodeClient wavesapi.Node, priceProvider provider.PriceProvider, isTimeout bool) (bool, error) {
 
 	contractState, err := nodeClient.GetStateByAddress(cfg.ControlContract)
@@ -54,22 +60,12 @@ func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
 		return false, nil
 	}
 
-	ipsByPubKeyOracle := make(map[string][]string)
-	for _, pubKeyOracle := range pubKeyOracles {
-		ip, ok := contractState["ips_"+pubKeyOracle]
-		if !ok {
-			continue
-		}
-
-		ipsByPubKeyOracle[pubKeyOracle] = strings.Split(ip.Value.(string), ";")
-	}
-
 	signs := make(map[string]string)
 	values := make(map[string]string)
 
-	for pubKeyOracle, ips := range ipsByPubKeyOracle {
+	for _, ip := range cfg.Ips {
 		var client = &http.Client{Timeout: 10 * time.Second}
-		res, err := client.Get(ips[0] + "/api/price?height=" + strconv.Itoa(height))
+		res, err := client.Get(ip + "/api/price?height=" + strconv.Itoa(height))
 		if err != nil {
 			return false, err
 		}
@@ -81,11 +77,6 @@ func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
 				return false, err
 			}
 
-			if pubKeyOracle != result.PublicKey {
-				fmt.Printf("invalid pubKey (%s) \n", pubKeyOracle)
-				continue
-			}
-
 			values[result.PublicKey] = strings.Split(result.Message, "_")[2]
 			signs[result.PublicKey] = result.Signature
 			fmt.Printf("Oracle %s: %s \n", result.PublicKey, values[result.PublicKey])
@@ -94,7 +85,7 @@ func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
 		res.Body.Close()
 	}
 
-	signedPrice, err := storage.GetKeystore(dbPath, height)
+	signedPrice, err := storage.GetKeystore(db, height)
 	if err != nil && err != leveldb.ErrNotFound {
 		fmt.Printf("Error: %s \n", err.Error())
 	} else {
@@ -107,7 +98,7 @@ func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
 		msg := signPrefix + "_" + strconv.Itoa(height) + "_" + strconv.Itoa(newPrice)
 		signedText, err := nodeClient.SignMsg(msg, oracleAddress)
 
-		err = storage.PutKeystore(dbPath, height, signedText)
+		err = storage.PutKeystore(db, height, signedText)
 		if err != nil {
 			return false, err
 		}
@@ -120,44 +111,50 @@ func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
 	}
 
 	if _, ok := contractState["price_"+strconv.Itoa(height)]; len(signs) >= 3 && !ok {
-		sortedValues := ""
-		sortedSigns := ""
+		var funcArgs []transactions.FuncArg
+
 		for _, pubKey := range pubKeyOracles {
-			if len(sortedSigns) > 0 {
-				sortedSigns += ","
-			}
-			if len(sortedValues) > 0 {
-				sortedValues += ","
-			}
 
 			value, ok := values[pubKey]
 			if ok {
-				sortedValues += value
+				valueInt, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					funcArgs = append(funcArgs, transactions.FuncArg{
+						Type:  "integer",
+						Value: 0,
+					})
+				}
+				funcArgs = append(funcArgs, transactions.FuncArg{
+					Type:  "integer",
+					Value: valueInt,
+				})
 			} else {
-				sortedValues += "0"
+				funcArgs = append(funcArgs, transactions.FuncArg{
+					Type:  "integer",
+					Value: 0,
+				})
 			}
 
 			sign, ok := signs[pubKey]
+			bytesSign := base58.Decode(sign)
+			base64Sing := base64.StdEncoding.EncodeToString(bytesSign)
 			if ok {
-				sortedSigns += sign
+				funcArgs = append(funcArgs, transactions.FuncArg{
+					Type:  "binary",
+					Value: "base64:" + base64Sing,
+				})
 			} else {
-				sortedSigns += "q"
+				funcArgs = append(funcArgs, transactions.FuncArg{
+					Type:  "binary",
+					Value: "",
+				})
 			}
 		}
 
 		tx := transactions.New(transactions.InvokeScript, oracleAddress)
 		tx.NewInvokeScript(cfg.ControlContract, transactions.FuncCall{
 			Function: "finalizeCurrentPrice",
-			Args: []transactions.FuncArg{
-				{
-					Value: sortedValues,
-					Type:  "string",
-				},
-				{
-					Value: sortedSigns,
-					Type:  "string",
-				},
-			},
+			Args:     funcArgs,
 		}, nil, 500000)
 		err = nodeClient.SignTx(&tx)
 		if err != nil {
@@ -176,6 +173,6 @@ func HandleHeight(cfg config.Config, oracleAddress string, dbPath string,
 		fmt.Printf("Tx finilize: %s \n", tx.ID)
 	}
 
-	time.Sleep(1 * time.Second)
+	//	time.Sleep(1 * time.Second)
 	return false, nil
 }

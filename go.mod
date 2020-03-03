@@ -3,6 +3,7 @@ module offchain-oracles
 go 1.13
 
 require (
+	github.com/btcsuite/btcutil v1.0.1
 	github.com/fatih/structs v1.1.0
 	github.com/golang/mock v1.4.0
 	github.com/jarcoal/httpmock v1.0.4

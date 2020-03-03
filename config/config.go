@@ -10,6 +10,7 @@ type Config struct {
 	ApiKey          string
 	ControlContract string
 	Timeout         int
+	Ips             []string
 }
 
 func Load(filename string) (Config, error) {
