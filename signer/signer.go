@@ -36,7 +36,6 @@ func StartSigner(cfg config.Config, oracleAddress string, db *leveldb.DB) {
 		if err != nil {
 			fmt.Printf("Error: %s \n", err.Error())
 		}
-		//	time.Sleep(time.Second * time.Duration(cfg.Timeout))
 	}
 }
 
@@ -67,22 +66,31 @@ func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 		var client = &http.Client{Timeout: 10 * time.Second}
 		res, err := client.Get(ip + "/api/price?height=" + strconv.Itoa(height))
 		if err != nil {
-			return false, err
+			fmt.Printf("Http error %s: %s \n", ip, err.Error())
+			continue
 		}
 
 		if res.StatusCode == 200 {
 			var result models.SignedText
 			err = json.NewDecoder(res.Body).Decode(&result)
 			if err != nil {
-				return false, err
+				fmt.Printf("Parse error %s: %s \n", ip, err.Error())
+				continue
 			}
-
+			if result.Message == "" {
+				fmt.Printf("Oracle (%s) %s: %s \n", ip, result.PublicKey, "empty msg")
+				continue
+			}
 			values[result.PublicKey] = strings.Split(result.Message, "_")[2]
 			signs[result.PublicKey] = result.Signature
-			fmt.Printf("Oracle %s: %s \n", result.PublicKey, values[result.PublicKey])
+			fmt.Printf("Oracle (%s) %s: %s \n", ip, result.PublicKey, values[result.PublicKey])
 		}
-
-		res.Body.Close()
+		if res.Body != nil {
+			if err := res.Body.Close(); err != nil {
+				fmt.Printf("Http close error %s: %s \n", ip, err.Error())
+				continue
+			}
+		}
 	}
 
 	signedPrice, err := storage.GetKeystore(db, height)
@@ -173,6 +181,6 @@ func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 		fmt.Printf("Tx finilize: %s \n", tx.ID)
 	}
 
-	//	time.Sleep(1 * time.Second)
+	time.Sleep(1 * time.Second)
 	return false, nil
 }
