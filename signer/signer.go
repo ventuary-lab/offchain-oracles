@@ -1,60 +1,87 @@
 package signer
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"offchain-oracles/config"
+	"offchain-oracles/helpers"
 	"offchain-oracles/signer/provider"
 	"offchain-oracles/storage"
-	"offchain-oracles/wavesapi"
-	"offchain-oracles/wavesapi/models"
-	"offchain-oracles/wavesapi/transactions"
+
+	"offchain-oracles/models"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/btcsuite/btcutil/base58"
-
 	"github.com/syndtr/goleveldb/leveldb"
+	wavesplatform "github.com/wavesplatform/go-lib-crypto"
+	"github.com/wavesplatform/gowaves/pkg/client"
+	"github.com/wavesplatform/gowaves/pkg/crypto"
+	proto "github.com/wavesplatform/gowaves/pkg/proto"
 )
 
 const (
 	signPrefix = "WAVESNEUTRINOPREFIX"
 )
 
-func StartSigner(cfg config.Config, oracleAddress string, db *leveldb.DB) {
-	var priceProvider provider.PriceProvider = provider.BinanceProvider{}
+func StartSigner(cfg config.Config, stringSeed string, chainId byte, ctx context.Context, db *leveldb.DB) error {
+	priceProvider := provider.BinanceProvider{}
+	nodeHelper := helpers.New(cfg.NodeURL, "")
 
-	var nodeClient = wavesapi.New(cfg.NodeURL, cfg.ApiKey)
+	nodeClient, err := client.NewClient(client.Options{ApiKey: "", BaseUrl: cfg.NodeURL})
+	if err != nil {
+		return err
+	}
 
 	isTimeout := false
 	for true {
 		var err error
-		isTimeout, err = HandleHeight(cfg, oracleAddress, db, nodeClient, priceProvider, isTimeout)
+		isTimeout, err = HandleHeight(cfg, stringSeed, chainId, db, nodeClient, nodeHelper, priceProvider, ctx, isTimeout)
 		if err != nil {
 			fmt.Printf("Error: %s \n", err.Error())
 		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 	}
+	return nil
 }
 
-func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
-	nodeClient wavesapi.Node, priceProvider provider.PriceProvider, isTimeout bool) (bool, error) {
+func HandleHeight(cfg config.Config, stringSeed string, chainId byte, db *leveldb.DB, nodeClient *client.Client,
+	nodeHelper helpers.Node, priceProvider provider.PriceProvider, ctx context.Context, isTimeout bool) (bool, error) {
 
-	contractState, err := nodeClient.GetStateByAddress(cfg.ControlContract)
+	wCrypto := wavesplatform.NewWavesCrypto()
+	seed := wavesplatform.Seed(stringSeed)
+	secret, err := crypto.NewSecretKeyFromBase58(string(wCrypto.PrivateKey(seed)))
+	if err != nil {
+		return false, err
+	}
+	pubKey := crypto.GeneratePublicKey(secret)
+
+	contractAddress, err := proto.NewAddressFromString(cfg.ControlContract)
+	if err != nil {
+		return false, err
+	}
+
+	contractState, err := nodeHelper.GetStateByAddress(cfg.ControlContract)
 	if err != nil {
 		return false, err
 	}
 
 	pubKeyOracles := strings.Split(contractState["oracles"].Value.(string), ",")
 
-	height, err := nodeClient.GetHeight()
+	height, _, err := nodeClient.Blocks.Height(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	_, priceExist := contractState["price_"+strconv.Itoa(height)]
+	_, priceExist := contractState["price_"+strconv.Itoa(int(height.Height))]
 	if priceExist {
 		return false, nil
 	}
@@ -64,7 +91,7 @@ func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 
 	for _, ip := range cfg.Ips {
 		var client = &http.Client{Timeout: 10 * time.Second}
-		res, err := client.Get(ip + "/api/price?height=" + strconv.Itoa(height))
+		res, err := client.Get(ip + "/api/price?height=" + strconv.Itoa(int(height.Height)))
 		if err != nil {
 			fmt.Printf("Http error %s: %s \n", ip, err.Error())
 			continue
@@ -93,7 +120,7 @@ func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 		}
 	}
 
-	signedPrice, err := storage.GetKeystore(db, height)
+	signedPrice, err := storage.GetKeystore(db, height.Height)
 	if err != nil && err != leveldb.ErrNotFound {
 		fmt.Printf("Error: %s \n", err.Error())
 	} else {
@@ -103,10 +130,16 @@ func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 		}
 
 		newPrice := int(newNotConvertedPrice * 100)
-		msg := signPrefix + "_" + strconv.Itoa(height) + "_" + strconv.Itoa(newPrice)
-		signedText, err := nodeClient.SignMsg(msg, oracleAddress)
+		msg := signPrefix + "_" + strconv.Itoa(int(height.Height)) + "_" + strconv.Itoa(newPrice)
 
-		err = storage.PutKeystore(db, height, signedText)
+		signature := wCrypto.SignBytesBySeed([]byte(msg), seed)
+
+		signedText := models.SignedText{
+			Message:   msg,
+			PublicKey: string(wCrypto.PublicKey(seed)),
+			Signature: base58.Encode(signature),
+		}
+		err = storage.PutKeystore(db, height.Height, signedText)
 		if err != nil {
 			return false, err
 		}
@@ -118,63 +151,63 @@ func HandleHeight(cfg config.Config, oracleAddress string, db *leveldb.DB,
 		return true, nil
 	}
 
-	if _, ok := contractState["price_"+strconv.Itoa(height)]; len(signs) >= 3 && !ok {
-		var funcArgs []transactions.FuncArg
-
+	if _, ok := contractState["price_"+strconv.Itoa(int(height.Height))]; len(signs) >= 3 && !ok {
+		funcArgs := new(proto.Arguments)
 		for _, pubKey := range pubKeyOracles {
 
 			value, ok := values[pubKey]
 			if ok {
 				valueInt, err := strconv.ParseInt(value, 10, 64)
 				if err != nil {
-					funcArgs = append(funcArgs, transactions.FuncArg{
-						Type:  "integer",
-						Value: 0,
-					})
+					funcArgs.Append(proto.NewIntegerArgument(0))
+				} else {
+					funcArgs.Append(proto.NewIntegerArgument(valueInt))
 				}
-				funcArgs = append(funcArgs, transactions.FuncArg{
-					Type:  "integer",
-					Value: valueInt,
-				})
 			} else {
-				funcArgs = append(funcArgs, transactions.FuncArg{
-					Type:  "integer",
-					Value: 0,
-				})
+				funcArgs.Append(proto.NewIntegerArgument(0))
 			}
 
 			sign, ok := signs[pubKey]
 			bytesSign := base58.Decode(sign)
-			base64Sing := base64.StdEncoding.EncodeToString(bytesSign)
 			if ok {
-				funcArgs = append(funcArgs, transactions.FuncArg{
-					Type:  "binary",
-					Value: "base64:" + base64Sing,
-				})
+				funcArgs.Append(proto.NewBinaryArgument(bytesSign))
 			} else {
-				funcArgs = append(funcArgs, transactions.FuncArg{
-					Type:  "binary",
-					Value: "",
-				})
+				funcArgs.Append(proto.NewBinaryArgument(nil))
 			}
 		}
 
-		tx := transactions.New(transactions.InvokeScript, oracleAddress)
-		tx.NewInvokeScript(cfg.ControlContract, transactions.FuncCall{
-			Function: "finalizeCurrentPrice",
-			Args:     funcArgs,
-		}, nil, 500000)
-		err = nodeClient.SignTx(&tx)
+		asset, err := proto.NewOptionalAssetFromString("WAVES")
 		if err != nil {
 			return false, err
 		}
 
-		err = nodeClient.Broadcast(tx)
+		tx := &proto.InvokeScriptV1{
+			Type:            proto.InvokeScriptTransaction,
+			Version:         1,
+			SenderPK:        pubKey,
+			ChainID:         chainId,
+			ScriptRecipient: proto.NewRecipientFromAddress(contractAddress),
+			FunctionCall: proto.FunctionCall{
+				Name:      "finalizeCurrentPrice",
+				Arguments: *funcArgs,
+			},
+			Payments:  nil,
+			FeeAsset:  *asset,
+			Fee:       500000,
+			Timestamp: client.NewTimestampFromTime(time.Now()),
+		}
+
+		err = tx.Sign(secret)
 		if err != nil {
 			return false, err
 		}
 
-		err = <-nodeClient.WaitTx(tx.ID)
+		_, err = nodeClient.Transactions.Broadcast(ctx, tx)
+		if err != nil {
+			return false, err
+		}
+
+		err = <-nodeHelper.WaitTx(base58.Encode((*tx.ID)[:]))
 		if err != nil {
 			return false, err
 		}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,12 +13,19 @@ import (
 
 var db *leveldb.DB
 
-func StartServer(host string, newDb *leveldb.DB) {
+func StartServer(host string, ctx context.Context, newDb *leveldb.DB) {
 	for {
 		db = newDb
 		http.HandleFunc("/api/price/", handleGetPrice)
 		http.ListenAndServe(host, nil)
 		println("Restart server")
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+
+		}
 	}
 }
 
@@ -35,7 +43,7 @@ func handleGetPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, err := storage.GetKeystore(db, height)
+	text, err := storage.GetKeystore(db, uint64(height))
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
