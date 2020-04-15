@@ -24,8 +24,7 @@ const (
 	signPrefix = "WAVESNEUTRINOPREFIX"
 )
 
-func StartSigner(cfg config.Config, oracleAddress string, db *leveldb.DB) {
-	var priceProvider provider.PriceProvider = provider.BinanceProvider{}
+func StartSigner(cfg config.Config, oracleAddress string, priceProvider provider.PriceProvider, db *leveldb.DB) {
 
 	var nodeClient = wavesapi.New(cfg.NodeURL, cfg.ApiKey)
 

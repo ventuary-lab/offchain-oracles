@@ -5,7 +5,15 @@ import (
 	"io/ioutil"
 )
 
+type PriceProviderType string
+
+const (
+	Binance PriceProviderType = "Binance"
+	Huobi   PriceProviderType = "Huobi"
+)
+
 type Config struct {
+	PriceProvider   PriceProviderType
 	NodeURL         string
 	ApiKey          string
 	ControlContract string

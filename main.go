@@ -6,6 +6,7 @@ import (
 	"offchain-oracles/config"
 	"offchain-oracles/server"
 	"offchain-oracles/signer"
+	"offchain-oracles/signer/provider"
 	"os"
 	"os/signal"
 	"syscall"
@@ -36,7 +37,16 @@ func main() {
 	defer db.Close()
 
 	go server.StartServer(host, db)
-	go signer.StartSigner(cfg, oracleAddress, db)
+
+	var pr provider.PriceProvider
+
+	switch cfg.PriceProvider {
+	case config.Binance:
+		pr = &provider.BinanceProvider{}
+	case config.Huobi:
+		pr = &provider.HuobiProvider{}
+	}
+	go signer.StartSigner(cfg, oracleAddress, pr, db)
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)

@@ -1,4 +1,5 @@
 {
+  "PriceProvider": "Huobi",
   "NodeURL": "",
   "ApiKey": "",
   "ControlContract": "",
