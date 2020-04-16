@@ -2,6 +2,8 @@
   "NodeURL": "http://127.0.0.1:6869",
   "ControlContract": "3MLpeh91zRnMnG7SxNngi4GaEwHdYgRWUcc",
   "ChainId": "R",
+  "PriceProvider": "Huobi",
+  "ControlContract": "",
   "Timeout": 0,
   "Ips": [
     "http://127.0.0.1:5000"

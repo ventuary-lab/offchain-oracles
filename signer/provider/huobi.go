@@ -4,23 +4,22 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
-	"strconv"
 )
 
-type BinanceProvider struct{}
+type HuobiProvider struct{}
 
-func (p *BinanceProvider) PriceNow() (float64, error) {
-	priceWavesUsdt, err := p.PriceNowByPair("WAVESUSDT")
+func (p *HuobiProvider) PriceNow() (float64, error) {
+	priceWavesUsdt, err := p.PriceNowByPair("wavesusdt")
 	if err != nil {
 		return 0, err
 	}
 
-	priceWavesBtc, err := p.PriceNowByPair("WAVESBTC")
+	priceWavesBtc, err := p.PriceNowByPair("wavesbtc")
 	if err != nil {
 		return 0, err
 	}
 
-	priceBtcUsdt, err := p.PriceNowByPair("BTCUSDT")
+	priceBtcUsdt, err := p.PriceNowByPair("btcusdt")
 	if err != nil {
 		return 0, err
 	}
@@ -30,8 +29,8 @@ func (p *BinanceProvider) PriceNow() (float64, error) {
 	return price, nil
 }
 
-func (p *BinanceProvider) PriceNowByPair(pair string) (float64, error) {
-	resp, err := http.Get("https://api.binance.com/api/v3/ticker/price?symbol=" + pair)
+func (HuobiProvider) PriceNowByPair(pair string) (float64, error) {
+	resp, err := http.Get("https://api.huobi.pro/market/history/trade?symbol=" + pair)
 	if err != nil {
 		return 0, err
 	}
@@ -47,10 +46,6 @@ func (p *BinanceProvider) PriceNowByPair(pair string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-
-	price, err := strconv.ParseFloat(jsonResponse["price"].(string), 64)
-	if err != nil {
-		return 0, err
-	}
+	price := jsonResponse["data"].([]interface{})[0].(map[string]interface{})["data"].([]interface{})[0].(map[string]interface{})["price"].(float64)
 	return price, nil
 }
