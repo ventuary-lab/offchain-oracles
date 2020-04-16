@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"offchain-oracles/config"
@@ -20,9 +21,9 @@ const (
 )
 
 func main() {
-	var host, confFileName, oracleAddress, dbPath string
+	var host, confFileName, seed, dbPath string
 	flag.StringVar(&host, "host", defaultHost, "set host")
-	flag.StringVar(&oracleAddress, "oracleAddress", "", "set oracle address")
+	flag.StringVar(&seed, "seed", "", "set seed")
 	flag.StringVar(&confFileName, "config", defaultConfigFileName, "set config path")
 	flag.StringVar(&dbPath, "db", defaultDbPath, "set db path")
 	flag.Parse()
@@ -35,8 +36,9 @@ func main() {
 	db, err := leveldb.OpenFile(dbPath+"/"+"prices", nil)
 	defer db.Close()
 
-	go server.StartServer(host, db)
-	go signer.StartSigner(cfg, oracleAddress, db)
+	ctxWithCancel, cancelCtxFunc := context.WithCancel(context.Background())
+	go server.StartServer(host, ctxWithCancel, db)
+	go signer.StartSigner(cfg, seed, cfg.ChainId[0], ctxWithCancel, db)
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
@@ -45,12 +47,14 @@ func main() {
 
 	go func() {
 		sig := <-sigs
-		fmt.Println()
 		fmt.Println(sig)
 		done <- true
 	}()
 
 	fmt.Println("Started...")
 	<-done
+
+	cancelCtxFunc()
+
 	fmt.Println("Stopped...")
 }

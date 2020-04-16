@@ -7,7 +7,7 @@ import (
 
 type Config struct {
 	NodeURL         string
-	ApiKey          string
+	ChainId         string
 	ControlContract string
 	Timeout         int
 	Ips             []string

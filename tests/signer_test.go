@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"offchain-oracles/config"
+	"offchain-oracles/models"
 	"offchain-oracles/signer"
 	"offchain-oracles/signer/provider"
-	"offchain-oracles/wavesapi"
-	"offchain-oracles/wavesapi/models"
 	"offchain-oracles/wavesapi/state"
 	"strconv"
 	"testing"
@@ -30,7 +29,7 @@ func TestHandler(t *testing.T) {
 	oracleAddress := "testOracle"
 	height := 100
 	testDb := "db/"
-	testNode := wavesapi.New(nodeUrl, "")
+	testNode := waveshelper.New(nodeUrl, "")
 
 	provider := provider.BinanceProvider{}
 
