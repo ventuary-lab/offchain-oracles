@@ -27,8 +27,7 @@ const (
 	signPrefix = "WAVESNEUTRINOPREFIX"
 )
 
-func StartSigner(cfg config.Config, stringSeed string, chainId byte, ctx context.Context, db *leveldb.DB) error {
-	priceProvider := provider.BinanceProvider{}
+func StartSigner(cfg config.Config, stringSeed string, chainId byte, ctx context.Context, priceProvider provider.PriceProvider, db *leveldb.DB) error {
 	nodeHelper := helpers.New(cfg.NodeURL, "")
 
 	nodeClient, err := client.NewClient(client.Options{ApiKey: "", BaseUrl: cfg.NodeURL})
