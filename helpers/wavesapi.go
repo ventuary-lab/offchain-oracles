@@ -33,12 +33,16 @@ func New(nodeUrl string, apiKey string) Node {
 func (node *Node) GetStateByAddressAndKey(address string, key string) (*state.State, error) {
 	rsBody, _, err := sendRequest("GET", node.nodeUrl+GetStateByAddressPath+"/"+address+"?key="+key, nil, "")
 
-	var states []state.State
 	if err != nil {
 		return nil, err
 	}
+
+	var states []state.State
 	if err := json.Unmarshal(rsBody, &states); err != nil {
 		return nil, err
+	}
+	if len(states) == 0 {
+		return nil, nil
 	}
 	return &states[0], nil
 }
