@@ -68,20 +68,24 @@ func HandleHeight(cfg config.Config, stringSeed string, chainId byte, db *leveld
 		return false, err
 	}
 
-	contractState, err := nodeHelper.GetStateByAddress(cfg.ControlContract)
+	pubKeyOraclesState, err := nodeHelper.GetStateByAddressAndKey(cfg.ControlContract, "oracles")
 	if err != nil {
-		return false, err
+		return false, nil
 	}
 
-	pubKeyOracles := strings.Split(contractState["oracles"].Value.(string), ",")
+	pubKeyOracles := strings.Split(pubKeyOraclesState.Value.(string), ",")
 
 	height, _, err := nodeClient.Blocks.Height(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	_, priceExist := contractState["price_"+strconv.Itoa(int(height.Height))]
-	if priceExist {
+	price, err := nodeHelper.GetStateByAddressAndKey(cfg.ControlContract, "price_"+strconv.Itoa(int(height.Height)))
+	if err != nil {
+		return false, nil
+	}
+
+	if price != nil {
 		return false, nil
 	}
 
@@ -150,7 +154,7 @@ func HandleHeight(cfg config.Config, stringSeed string, chainId byte, db *leveld
 		return true, nil
 	}
 
-	if _, ok := contractState["price_"+strconv.Itoa(int(height.Height))]; len(signs) >= 3 && !ok {
+	if len(signs) >= 3 && price == nil {
 		funcArgs := new(proto.Arguments)
 		for _, pubKey := range pubKeyOracles {
 
