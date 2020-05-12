@@ -30,19 +30,20 @@ func New(nodeUrl string, apiKey string) Node {
 	return Node{nodeUrl: nodeUrl, apiKey: apiKey}
 }
 
-func (node Node) GetStateByAddress(address string) (map[string]state.State, error) {
-	rsBody, _, err := sendRequest("GET", node.nodeUrl+GetStateByAddressPath+"/"+address, nil, "")
+func (node *Node) GetStateByAddressAndKey(address string, key string) (*state.State, error) {
+	rsBody, _, err := sendRequest("GET", node.nodeUrl+GetStateByAddressPath+"/"+address+"?key="+key, nil, "")
+
+	var states []state.State
 	if err != nil {
 		return nil, err
 	}
-	states := state.States{}
 	if err := json.Unmarshal(rsBody, &states); err != nil {
 		return nil, err
 	}
-	return states.Map(), nil
+	return &states[0], nil
 }
 
-func (node Node) GetTxById(id string) (transactions.Transaction, error) {
+func (node *Node) GetTxById(id string) (transactions.Transaction, error) {
 	rsBody, _, err := sendRequest("GET", node.nodeUrl+GetTxPath+"/"+id, nil, "")
 	if err != nil {
 		return transactions.Transaction{}, err
@@ -51,7 +52,7 @@ func (node Node) GetTxById(id string) (transactions.Transaction, error) {
 	return transactions.Unmarshal(rsBody)
 }
 
-func (node Node) IsUnconfirmedTx(id string) (bool, error) {
+func (node *Node) IsUnconfirmedTx(id string) (bool, error) {
 	_, code, err := sendRequest("GET", node.nodeUrl+GetUnconfirmedTxByPath+"/"+id, nil, "")
 	if err != nil && code != 404 {
 		return true, err
@@ -60,7 +61,7 @@ func (node Node) IsUnconfirmedTx(id string) (bool, error) {
 	return code == 200, nil
 }
 
-func (node Node) WaitTx(id string) <-chan error {
+func (node *Node) WaitTx(id string) <-chan error {
 	out := make(chan error)
 	go func() {
 		defer close(out)
